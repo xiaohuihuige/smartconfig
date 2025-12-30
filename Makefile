@@ -1,39 +1,46 @@
-CC          = arm-linux-gnueabihf-gcc
-#CC          = arm-unknown-linux-uclibcgnueabihf-gcc
-LINKER   	= $(CC) -o
+MODULE   		:= smartcfg
+CROSS_COMPILE 	:= arm-linux-gnueabihf-
+CC 				:= $(CROSS_COMPILE)gcc
+AR 				:= $(CROSS_COMPILE)ar
 
-CFLAGS   	= -O2 -x c -Wall
-LFLAGS   	= -Wall -lm -lrt 
+BUILD_TOP		:= $(shell pwd)
+OUT_DIR    		= $(BUILD_TOP)/out
+OBJ_DIR     	= $(OUT_DIR)/obj
+BIN_DIR     	= $(OUT_DIR)/bin
+INCLUDE_DIR 	= $(OUT_DIR)/include
+LIB_DIR     	= $(OUT_DIR)/lib
+SRC_DIR     	= $(BUILD_TOP)/src
+EXAMPLE			= $(BUILD_TOP)/example
 
-# change these to set the proper directories where each files should be
-SRCDIR     = .
-OBJDIR     = ./bin
-BINDIR     = ./bin
-INSTALLDIR = /bin/
-TARGET     := smartcfg
+OBJ_FILE 		= $(wildcard $(OBJ_DIR)/*.o)
+CFLAGS 			= -I$(SRC_DIR) -lpthread -lrt -Wall -fPIC -g
 
-SOURCES  := $(wildcard $(SRCDIR)/*.c)
-INCLUDES := $(wildcard $(SRCDIR)/*.h)
-OBJECTS  := $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+vpath %.c $(SRC_DIR)
 
-all: $(BINDIR)/$(TARGET)
-	@echo "$(BINDIR)/$(TARGET): done"
+OBJ = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o,$(wildcard $(SRC_DIR)/*.c))
+DEMO = $(patsubst $(EXAMPLE)/%.c, $(BIN_DIR)/%, $(wildcard $(EXAMPLE)/*.c))
+
+.PHONY: all clean OUT_PATH 
+
+all: clean OUT_PATH $(OBJ) $(DEMO) SMART_LIBS
+
+OUT_PATH:
+	[ -d $(OUT_DIR) ] || mkdir -p $(OUT_DIR)
+	[ -d $(OBJ_DIR) ] || mkdir -p $(OBJ_DIR)
+	[ -d $(BIN_DIR) ] || mkdir -p $(BIN_DIR)
+	[ -d $(INCLUDE_DIR) ] || mkdir -p $(INCLUDE_DIR)
+	[ -d $(LIB_DIR) ] || mkdir -p $(LIB_DIR)
+
+SMART_LIBS:
+	$(AR) rcs $(LIB_DIR)/lib$(MODULE).a $(OBJ_FILE)
+	$(CC) -shared -o $(LIB_DIR)/lib$(MODULE).so $(OBJ_FILE)
+
+$(BIN_DIR)/%: $(EXAMPLE)/%.c
+	$(CC) -o $@ $^ $(OBJ_FILE) $(CFLAGS)
+
+$(OBJ_DIR)/%.o: %.c
+	@echo "Compiling $< to $@"
+	$(CC) -c $^ -o $@ $(CFLAGS) $(ALGOLIBS) $(LDFLAGS)
 
 clean:
-	rm -f $(OBJECTS)	
-
-$(OBJECTS): $(OBJDIR)/%.o: $(SRCDIR)/%.c $(SRCDIR)/%.h
-	LT=$<
-	AT=$@
-	mkdir -p $(OBJDIR)	
-	@echo "Compile $@ -> $< ..."
-	$(CC) $(CFLAGS) -c $< -o $@
-	@echo "Compile $@ -> $< done."
-	
-$(BINDIR)/$(TARGET): $(OBJECTS)
-	LT=$<
-	AT=$@
-	mkdir -p $(BINDIR)	
-	@echo "Linking $(OBJECTS) -> $(BINDIR)/$(TARGET) ..."
-	$(LINKER) $(BINDIR)/$(TARGET) $(LFLAGS) $(OBJECTS)
-	@echo "Linking $(BINDIR)/$(TARGET) done."
+	-$(RM) -rf $(OUT_DIR) 

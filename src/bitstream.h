@@ -42,6 +42,7 @@ static uint32_t bs_read_u(bs_t* b, int n);
 static uint32_t bs_read_ru(bs_t* b, int n);
 static uint32_t bs_read_f(bs_t* b, int n);
 static uint32_t bs_read_u8(bs_t* b);
+static uint32_t bs_read_u8n(bs_t* b, int n);
 static uint32_t bs_read_ue(bs_t* b);
 static int32_t  bs_read_se(bs_t* b);
 
@@ -171,6 +172,11 @@ static inline uint32_t bs_read_u8(bs_t* b)
     }
 #endif
     return bs_read_u(b, 8);
+}
+
+static uint32_t bs_read_u8n(bs_t* b, int n)
+{
+    return bs_read_u(b, 8 * n);
 }
 
 static inline uint32_t bs_read_ue(bs_t* b)

@@ -1,8 +1,7 @@
 #ifndef __WLAN_80211_H__
 #define __WLAN_80211_H__
 
-#include <stdint.h>
-#include <stddef.h>  // C 标准库
+#include "common.h"
 
 typedef struct {
 	uint8_t version;	
@@ -14,7 +13,7 @@ typedef struct {
     uint16_t channel_flags;
     uint8_t antenna_signal;
 } ieee80211_radiotap_header;
-//15
+
 
 typedef struct 
 {
@@ -28,6 +27,6 @@ typedef struct
 } ieee80211_radiotap_frame;
 //32
 
-int parse_ieee80211_radiotap_header(uint8_t *buffer, int size);
+int ieee80211RadiotapHeader(uint8_t *buffer, int size);
 
 #endif
