@@ -11,6 +11,7 @@ INCLUDE_DIR 	= $(OUT_DIR)/include
 LIB_DIR     	= $(OUT_DIR)/lib
 SRC_DIR     	= $(BUILD_TOP)/src
 EXAMPLE			= $(BUILD_TOP)/example
+HEADER		    = $(SRC_DIR)/smartcfg.h 
 
 OBJ_FILE 		= $(wildcard $(OBJ_DIR)/*.o)
 CFLAGS 			= -I$(SRC_DIR) -lpthread -lrt -Wall -fPIC -g
@@ -34,6 +35,7 @@ OUT_PATH:
 SMART_LIBS:
 	$(AR) rcs $(LIB_DIR)/lib$(MODULE).a $(OBJ_FILE)
 	$(CC) -shared -o $(LIB_DIR)/lib$(MODULE).so $(OBJ_FILE)
+	cp $(HEADER) $(INCLUDE_DIR)
 
 $(BIN_DIR)/%: $(EXAMPLE)/%.c
 	$(CC) -o $@ $^ $(OBJ_FILE) $(CFLAGS)

@@ -2,58 +2,31 @@
 #include "sockets.h"
 #include "common.h"
 
+#define START_FLAGS  (0x7F)
+#define END_FLAGS    (0x7F)
+
 typedef struct 
 {
+    uint8_t u32Index;
+    uint8_t u32Sequence;
     SOCKET sockfd;
-    volatile sig_atomic_t threadExit;
-    pthread_t thread;
-} SmartLinktx_t;
+    Mutex mutex;
+} SmartLinkTx_t;
 
-static SmartLinktx_t *_smartlinktx_init(const char *dev)
+static int _smartlinkTxSockConfig(SOCKET sockfd, const char *dev)
 {
-    SmartLinktx_t *tx = (SmartLinktx_t *)calloc(1, sizeof(SmartLinktx_t));
-    if (!tx) {
-        ERR("malloc error");
-        return NULL;
-    }
-
-    do  {
-        tx->sockfd = createUdpSocket();
-        if (tx->sockfd == INVALID_SOCKET) {
-            ERR("createUdpSocket error");
-            break;
-        }
-
-        if (socketSetBroadcast(tx->sockfd) != SMART_SUCCESS) {
-            ERR("socketSetBroadcast error");
-            break;
-        }
-
-        if (socketBindIfcdev(tx->sockfd, dev)) {
-            ERR("socketBindIfcdev error");
-            break;
-        }
-        LOG("smartlinktx_init success");
-        return (void *)tx;
-    } while (0);
-   
-    CLOSE_SOCKET(tx->sockfd);
-    SMART_FREE(tx);
-
-    return NULL;
+    ST_CHECK_SOCKET(sockfd);
+    ST_CHECK_POINTER(dev);
+    STCHECKRESULT(socketSetBroadcast(sockfd));
+    STCHECKRESULT(socketBindIfcdev(sockfd, dev));
+    return SMART_SUCCESS;
 }
 
-static void _smartlinktx_exit(void *ctx)
+static int _smartlinkTxSendto(SOCKET sockfd, int sendlen)
 {
-    ST_CHECK_POINTER_VOID(ctx);
-    CLOSE_SOCKET(((SmartLinktx_t *)ctx)->sockfd);
-    SMART_FREE(ctx);
-}
-
-static int smartlinktx_sendto(SmartLinktx_t *tx, int sendlen)
-{
+    ST_CHECK_SOCKET(sockfd);
     uint8_t packet[PACKET_MAX] = {0};
-    int n = socketSendtoBroadcast(tx->sockfd, packet, sendlen);
+    int n = socketSendtoBroadcast(sockfd, packet, sendlen);
     if (n < 0) {
         ERR("%s: %s (%d)", "sendto failed", strerror(errno), errno);
         return SMART_FAIL;
@@ -61,45 +34,91 @@ static int smartlinktx_sendto(SmartLinktx_t *tx, int sendlen)
     return SMART_SUCCESS;
 }
 
-static void _smartlinktx_send(SmartLinktx_t *tx, uint8_t *buffer, uint8_t size, int interval_ms)
-{
-    ST_CHECK_POINTER_VOID(tx);
-    ST_CHECK_POINTER_VOID(buffer);
-
-    uint8_t seq = 0x00;
-    for (uint8_t idx = 0; idx < size; idx++) {
-        uint8_t high  = (buffer[idx] >> 4) & 0x0F;
-        uint8_t low   = buffer[idx] & 0x0F;
-
-        uint8_t A0 = idx!= 0 ? ((buffer[idx-1] & 0x0F) ^ seq++) :(seq++);
-        uint8_t B0 = high ^ (seq++);
-
-        int sendlen0 = ((A0 << 4) | high) + 24;
-        int sendlen1 = ((B0 << 4) | low)+ 24;
-
-        LOG("%03X, %03X, idx :%d, hight %03X, low %03X", A0, B0, idx , high, low);
-        smartlinktx_sendto(tx,  sendlen0);
-        smartlinktx_sendto(tx,  sendlen1);
-        LOG("seq %d, sendlen0: %d, sendlen1: %d", seq, sendlen0, sendlen1);
-        delay_ms(interval_ms);
-    }
-}
-
-void smartlinktx_send(void *ctx, uint8_t *buf, int len, int interval_ms)
-{
-    ST_CHECK_POINTER_VOID(ctx);
-    ST_CHECK_POINTER_VOID(buf);
-    return _smartlinktx_send((SmartLinktx_t *)ctx, buf, len, interval_ms);
-}
-
-void* smartlinktx_init(const char *dev)
+void *smartlinktTxInit(const char *dev)
 {
     ST_CHECK_POINTER_NULL(dev);
-    return (void *)_smartlinktx_init(dev);
+
+    SmartLinkTx_t *tx = (SmartLinkTx_t *)calloc(1, sizeof(SmartLinkTx_t));
+    if (!tx) {
+        ERR("malloc error");
+        return NULL;
+    }
+
+    MUTEX_INIT(tx->mutex);
+
+    do {
+        tx->sockfd = createUdpSocket();
+        if (tx->sockfd == INVALID_SOCKET) {
+            ERR("createUdpSocket error");
+            break;
+        }
+
+        if (_smartlinkTxSockConfig(tx->sockfd, dev) != SMART_SUCCESS) {
+            ERR("smartlinkTxSockConfig error");
+            break;
+        }
+        LOG("smartlinktx_init success");
+        return (void *)tx;
+    } while (0);
+
+    CLOSE_SOCKET(tx->sockfd);
+
+    MUTEX_DESTROY(tx->mutex);
+
+    SMART_FREE(tx);
+
+    return NULL;
 }
 
-void smartlinktx_exit(void *ctx)
+void smartlinkTxDeInt(void *ctx)
 {
     ST_CHECK_POINTER_VOID(ctx);
-    return _smartlinktx_exit(ctx);
+    SmartLinkTx_t *tx = (SmartLinkTx_t *)ctx;
+    MUTEX_LOCK(tx->mutex);
+    CLOSE_SOCKET(tx->sockfd);
+    MUTEX_UNLOCK(tx->mutex);
+    SMART_FREE(tx);
+}
+
+// int sendlen0 = ((L(n-1) ^ seq++) << 4) | H(n);
+// int sendlen1 = ((H(n) ^ (seq++)) << 4) | L(n);
+
+void smartlinkTxSend(void *ctx, uint8_t *input, uint8_t size, int interval_ms)
+{
+    ST_CHECK_POINTER_VOID(ctx);
+    ST_CHECK_POINTER_VOID(input);
+
+    SmartLinkTx_t *tx = (SmartLinkTx_t *)ctx;
+
+    uint8_t length = size+2;
+
+    uint8_t *buffer =(uint8_t *)malloc(sizeof(length));
+    if (!buffer) {
+        ERR("malloc error");
+        return;
+    }
+
+    buffer[0] = START_FLAGS;
+    memcpy(buffer+1, input, size);
+    buffer[size+1] = END_FLAGS;
+
+    MUTEX_LOCK(tx->mutex);
+    tx->u32Sequence = 0x00;
+    for (uint8_t u8Index = 0; u8Index < length; u8Index++) {
+        uint8_t high1  = buffer[u8Index] >> 4;
+        uint8_t low1   = buffer[u8Index] & 0xF;
+
+        uint8_t low0  = u8Index != 0 ? ((buffer[u8Index-1] & 0xF) ^ tx->u32Sequence++) : (tx->u32Sequence++);
+        uint8_t highs = high1 ^ (tx->u32Sequence++);
+
+        int sendlen0 = ((low0 << 4) | high1) + 24;
+        int sendlen1 = ((highs << 4) | low1)+ 24;
+
+        _smartlinkTxSendto(tx->sockfd,  sendlen0);
+        _smartlinkTxSendto(tx->sockfd,  sendlen1);
+        LOG("u8Index %d, sendlen0: %d, sendlen1: %d", u8Index, sendlen0, sendlen1);
+        delay_ms(interval_ms);
+    }
+
+    MUTEX_UNLOCK(tx->mutex);
 }

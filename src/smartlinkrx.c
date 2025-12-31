@@ -3,9 +3,10 @@
 #include "iface.h"
 #include "common.h"
 #include "smartcfg.h"
-#include "list.h"
 
-#define BUFFER_MAX (512)
+#define BUFFER_MAX   (512)
+#define START_FLAGS  (0x7F)
+#define END_FLAGS    (0x7F)
 
 typedef struct 
 {
@@ -14,9 +15,9 @@ typedef struct
     SOCKET sockFd;
     uint8_t u32Index;
     uint8_t u32Sequence;
+    uint8_t sourceAddr[MAC_LEN];
     uint8_t buffer[BUFFER_MAX];
     uint16_t u16Channel;
-    Mutex mutex;
     pthread_t thread;
     volatile sig_atomic_t threadExit;
 } SmartLinkRx_t;
@@ -33,7 +34,7 @@ static int _smartLinkRxSockConfig(SOCKET sockFd, const char *dev, uint16_t u16Ch
     return SMART_SUCCESS;
 }
 
-static void _smartlinkRxEncode(SmartLinkRx_t *ctx, int sendlen)
+static void _smartlinkRxDecode(SmartLinkRx_t *ctx, int sendlen, ieee80211_radiotap *radiotap)
 {
     ST_CHECK_POINTER_VOID(ctx);
 
@@ -49,20 +50,21 @@ static void _smartlinkRxEncode(SmartLinkRx_t *ctx, int sendlen)
     } else {
         uint8_t pdata = ctx->buffer[ctx->u32Index] >> 4;
         if (((pdata ^ ctx->u32Sequence) != flag)) {
-            if (ctx->u32Index == 0x00 && data != 0x7) {
+            if (ctx->u32Index == 0x00 && data != 0x7) 
                 ctx->u32Sequence = 0x00;
-                return;
-            }
             return;
         }
 
         ctx->buffer[ctx->u32Index++] |= data;//低位赋值
-        LOG("ctx->buffer %s",  ctx->buffer);
-        if (ctx->u32Index != 0x01 && ctx->buffer[ctx->u32Index-1] == 0x7F) {
+
+        if (ctx->u32Index > 0x02) 
+            memcpy(ctx->sourceAddr, radiotap->saddr, sizeof(radiotap->saddr));
+
+        LOG("revc the data: %03X", ctx->buffer[ctx->u32Index-1]);
+
+        if (ctx->u32Index > 0x02 && ctx->buffer[ctx->u32Index-1] == END_FLAGS) {
             ctx->buffer[ctx->u32Index-1] = '\0';
-            uint8_t tem_buffer[100] = {0};
-            snprintf((char *)tem_buffer, sizeof(tem_buffer), "%s", ctx->buffer + 1);
-            ctx->smartLinkRx(ctx->userData, NULL, tem_buffer, ctx->u32Index -2);
+            ctx->smartLinkRx(ctx->userData, ctx->sourceAddr, MAC_LEN, ctx->buffer + 1, ctx->u32Index);
         }
     }
     ctx->u32Sequence++;
@@ -73,11 +75,13 @@ static void * _smartlinkRxProcess(void *args)
     ST_CHECK_POINTER_NULL(args);
     SmartLinkRx_t *ctx= (SmartLinkRx_t *)args;
 
+    ieee80211_radiotap radiotap = {0};
+
     while (!ctx->threadExit) {
-        int sendlen = socketRevcRawpacket(ctx->sockFd);
+        int sendlen = socketRevcRawpacket(ctx->sockFd, &radiotap);
         if (sendlen <= 0)
             continue;
-        _smartlinkRxEncode(ctx, sendlen);
+        _smartlinkRxDecode(ctx, sendlen, &radiotap);
     }
     return NULL;
 }
@@ -97,8 +101,6 @@ void smartLinkRxDeInit(void *ctx)
     }
     CLOSE_SOCKET(receivers->sockFd);
 
-    MUTEX_DESTROY(receivers->mutex);
-
     SMART_FREE(receivers);
 }
 
@@ -111,8 +113,6 @@ void* smartLinkRxInit(const char *dev, uint16_t u16Channel, SmartLinkRxFunc smar
         ERR("malloc error");
         return NULL;
     }
-
-    MUTEX_INIT(receivers->mutex);
 
     do {
         receivers->sockFd = createRawSocket();

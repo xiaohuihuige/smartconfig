@@ -14,19 +14,23 @@ typedef struct {
     uint8_t antenna_signal;
 } ieee80211_radiotap_header;
 
-
 typedef struct 
 {
     uint8_t frame_type;
     uint16_t frame_control;
     uint16_t duration;
-    uint8_t daddr[6];
-    uint8_t wifiaddr[6];
-    uint8_t saddr[6];
+    uint8_t daddr[MAC_LEN];
+    uint8_t wifiaddr[MAC_LEN];
+    uint8_t saddr[MAC_LEN];
     uint8_t bss_id[9];
 } ieee80211_radiotap_frame;
 //32
 
-int ieee80211RadiotapHeader(uint8_t *buffer, int size);
+typedef struct {
+    uint8_t frame_type;
+    uint8_t saddr[MAC_LEN];
+} ieee80211_radiotap;
+
+int ieee80211RadiotapHeader(ieee80211_radiotap *radiotap, uint8_t *buffer, int size);
 
 #endif

@@ -43,13 +43,13 @@ int socketSetRevcbuffer(SOCKET sockfd, int size)
     return SMART_SUCCESS;
 }
 
-int socketRevcRawpacket(SOCKET sockfd)
+int socketRevcRawpacket(SOCKET sockfd, ieee80211_radiotap *radiotap)
 {
     ST_CHECK_SOCKET(sockfd);
 	uint8_t buffer[PACKET_MAX] = {0};
  	int rxlen = recvfrom(sockfd, buffer, sizeof(buffer)-1, 0, NULL, NULL);
 	if (rxlen > 0) {
-        return ieee80211RadiotapHeader(buffer, rxlen);
+        return ieee80211RadiotapHeader(radiotap, buffer, rxlen);
 	}
     return rxlen;
 }
